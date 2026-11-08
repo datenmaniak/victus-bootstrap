@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+GITHUB_USERNAME="datenmaniak"
+
+# Working dir
+WORKDIR="victus-bootstrap"
+
+GPGKEY="$HOME/${WORKDIR}/privatekey"
+ZSHRC="$HOME/.zshrc"
+
+# --- importar la llave primero
+if [[ -f "$GPGKEY" ]]; then
+  if ! gpg --import "$GPGKEY"; then
+    echo -e "ERROR: Falló la importación de la clave privada GPG."
+    echo -e "Se eliminará $HOME/.gnupg/common.conf para evitar el uso de keyboxd.\n"
+    rm -f "$HOME/.gnupg/common.conf"
+    # Reintento opcional sin keyboxd
+    if ! gpg --import "$GPGKEY"; then
+      echo -e "ERROR: La importación sigue fallando tras eliminar common.conf."
+      echo -e "Revisa los permisos de $HOME/.gnupg o el estado de keyboxd.\n"
+      exit 1
+    fi
+  fi
+else
+  echo -e "AVISO: No se encontró la clave privada GPG..!"
+  echo -e "Los dotfiles cifrados no podrán descifrarse hasta importarla\n"
+  echo -e "   - Copiar la llave en: $HOME/${WORKDIR}/privatekey "
+  echo -e "   - Ejecutar:   ./setup \n"
+  echo -e "\n --- privatekey --- será eliminada al finalizar este proceso --- "
+  exit 1
+fi
+
+# # echo "==> Importando clave GPG..."
+# if [[ -f "$GPGKEY" ]]; then
+#   gpg --import "$GPGKEY"
+# else
+#   echo -e "AVISO: No se encontró la clave privada GPG..!"
+#   echo -e "Los dotfiles cifrados no podrán descifrarse hasta importarla\n"
+#   echo -e "Haz una copia de la llave privada dentro del directorio\n"
+#   echo "    - cp <my-pprivate-key.asc>  ~/generic-bootstrap/privatekey  "
+#   echo -e "    - ejecuta nuevamente \`.setup\` \n"
+#   echo -e "\n --- privatekey --- será eliminada al finalizar este proceso --- "
+#   echo "Los dotfiles cifrados no podrán descifrarse hasta importarla."
+#   exit 1
+# fi
+
+echo "==> Creando directorios de configuración..."
+mkdir -p "$HOME/.config" "$HOME/.local/bin"
+
+echo "==> Instalando Mise..."
+curl -fsSL https://mise.run | sh
+
+# Hacer disponible Mise en esta sesión del script
+export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+
+echo "==> Verificando Mise..."
+mise --version
+
+# echo "==> Instalando Chezmoi mediante Mise..."
+mise use --global chezmoi@latest
+mise install
+#
+
+echo "==> Configurando activación de Mise en Zsh..."
+cat >>"$ZSHRC" <<'EOF'
+
+# Activa Mise en Zsh
+eval "$(mise activate zsh)"
+# -- MISE-TOOLS ---
+EOF
+
+echo "==> Inicializando y aplicando dotfiles..."
+chezmoi init --apply https://github.com/${GITHUB_USERNAME}/victus-dotfiles.git
+
+echo "==> Instalando herramientas declaradas por Mise..."
+mise install
+mise reshim
+
+echo "==> Configurando Starship y fzf en Zsh..."
+if grep -q "MISE-TOOLS" "$ZSHRC" 2>/dev/null; then
+  cat >>"$ZSHRC" <<'EOF'
+# --- Added by "workstation_bootstrap" by using Mise ---
+eval "$(mise activate zsh)"
+# -- Installed apps by Mise 
+eval "$(starship init zsh)"
+source <(fzf --zsh)
+# -- end bootstrap MISE-TOOLS --
+EOF
+
+fi
+
+# if [[ -d "$HOME/.local/share/chezmoi/scripts" ]]; then
+#   ln -sf "$HOME/.local/share/chezmoi/scripts" "$HOME/.scripts"
+#   echo "==> Creado enlace a los scrips personalizados!"
+# else
+#   echo "Ningun script!"
+# fi
+
+echo "==> Migración completada."
+rm "$GPGKEY"
+echo "Reinicia la consola!"
